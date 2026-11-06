@@ -1,0 +1,4 @@
+incidents.json
+*.exe
+.env
+.vscode/

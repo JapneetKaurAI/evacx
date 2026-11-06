@@ -1,0 +1,126 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EvacX - Evacuation Map</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; background: #f4f6f8; }
+  header { background: #1f2937; color: #fff; padding: 12px 20px; display: flex; justify-content: space-between; }
+  header a { color: #93c5fd; }
+  #banner { display: none; padding: 14px 20px; font-weight: bold; }
+  .alert { background: #fee2e2; color: #991b1b; }
+  .clear { background: #dcfce7; color: #166534; }
+  main { padding: 20px; max-width: 900px; margin: auto; }
+  select { font-size: 16px; padding: 6px; }
+  svg { width: 100%; background: #fff; border: 1px solid #ccc; border-radius: 8px; margin-top: 10px; }
+  #info { margin-top: 10px; font-size: 18px; font-weight: bold; }
+  .legend { margin-top: 8px; font-size: 14px; }
+  .legend span { margin-right: 14px; }
+</style>
+</head>
+<body>
+<header><div><b>EvacX</b> - Evacuation Guide</div><a href="/admin.html">Admin Panel</a></header>
+<div id="banner"></div>
+<main>
+  <label>I am at: <select id="from"></select></label>
+  <div id="info">Loading...</div>
+  <svg id="map" viewBox="0 0 800 500"></svg>
+  <div class="legend">
+    <span>Blue line = safest route</span>
+    <span>Green = Exit</span>
+    <span>Red = Dangerous / blocked</span>
+    <span>Yellow = Moderate crowd</span>
+    <span>Orange = Heavy crowd</span>
+  </div>
+</main>
+
+<script>
+let mapData = { nodes: [], edges: [] };
+let route = [];
+const select = document.getElementById('from');
+const info = document.getElementById('info');
+const svg = document.getElementById('map');
+const banner = document.getElementById('banner');
+
+async function loadMap() {
+  const res = await fetch('/api/map');
+  mapData = await res.json();
+  if (select.options.length === 0) {
+    mapData.nodes.forEach(n => {
+      const o = document.createElement('option');
+      o.value = n.id;
+      o.textContent = n.name;
+      select.appendChild(o);
+    });
+  }
+  await loadRoute();
+}
+
+async function loadRoute() {
+  const res = await fetch('/api/route?from=' + select.value);
+  const data = await res.json();
+  const byId = {};
+  mapData.nodes.forEach(n => byId[n.id] = n);
+  if (res.ok) {
+    route = data.path;
+    info.textContent = 'Safest route: ' + route.map(id => byId[id].name).join(' -> ');
+    info.style.color = '#166534';
+  } else {
+    route = [];
+    info.textContent = 'WARNING: ' + data.error;
+    info.style.color = '#991b1b';
+  }
+  draw();
+}
+
+function draw() {
+  const byId = {};
+  mapData.nodes.forEach(n => byId[n.id] = n);
+  let html = '';
+  mapData.edges.forEach(e => {
+    const a = byId[e.from], b = byId[e.to];
+    html += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#bbb" stroke-width="3"/>`;
+  });
+  for (let i = 0; i < route.length - 1; i++) {
+    const a = byId[route[i]], b = byId[route[i + 1]];
+    html += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#2563eb" stroke-width="8"/>`;
+  }
+  mapData.nodes.forEach(n => {
+    let color = '#9ca3af';
+    if (n.isExit) color = '#16a34a';
+    else if (n.occupancy >= 7) color = '#f97316';
+    else if (n.occupancy >= 4) color = '#facc15';
+    if (n.blocked) color = '#dc2626';
+    const stroke = n.id === select.value ? '#000' : '#fff';
+    html += `<circle cx="${n.x}" cy="${n.y}" r="22" fill="${color}" stroke="${stroke}" stroke-width="4"/>`;
+    const label = n.name + (!n.isExit && n.occupancy ? ' (' + n.occupancy + ')' : '');
+    html += `<text x="${n.x}" y="${n.y + 42}" text-anchor="middle" font-size="14">${label}</text>`;
+  });
+  svg.innerHTML = html;
+}
+
+function showBanner(text, type) {
+  banner.textContent = text;
+  banner.className = type === 'alert' ? 'alert' : 'clear';
+  banner.style.display = 'block';
+  setTimeout(() => banner.style.display = 'none', 90000);
+}
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(proto + '://' + location.host + '/ws');
+  ws.onmessage = ev => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'alert' || msg.type === 'clear') showBanner(msg.message, msg.type);
+    loadMap();
+  };
+  ws.onclose = () => setTimeout(connectWS, 2000);
+}
+
+select.addEventListener('change', loadRoute);
+loadMap();
+connectWS();
+</script>
+</body>
+</html>

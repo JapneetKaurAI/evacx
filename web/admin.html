@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EvacX - Admin Panel</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; background: #f4f6f8; }
+  header { background: #1f2937; color: #fff; padding: 12px 20px; display: flex; justify-content: space-between; }
+  header a { color: #93c5fd; }
+  main { padding: 20px; max-width: 900px; margin: auto; }
+  .card { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid #ddd; }
+  select, input, button { font-size: 15px; padding: 7px; margin: 4px 4px 4px 0; }
+  button { cursor: pointer; border: none; border-radius: 5px; background: #dc2626; color: #fff; }
+  button.green { background: #16a34a; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border-bottom: 1px solid #ddd; padding: 8px; text-align: left; font-size: 14px; }
+  #msg { font-weight: bold; margin-top: 8px; }
+  .stats span { display: inline-block; margin-right: 24px; font-size: 16px; }
+</style>
+</head>
+<body>
+<header><div><b>EvacX</b> - Admin Panel</div><a href="/">User View</a></header>
+<main>
+  <div class="card">
+    <h3>Report an emergency</h3>
+    <input id="pw" type="password" placeholder="Admin password (admin123)"><br>
+    <select id="node"></select>
+    <select id="type">
+      <option>Fire</option><option>Gas Leak</option>
+      <option>Earthquake Damage</option><option>Security Threat</option>
+    </select>
+    <select id="severity"><option>High</option><option>Medium</option><option>Low</option></select>
+    <button onclick="trigger()">Mark area as DANGEROUS</button>
+    <div id="msg"></div>
+  </div>
+
+  <div class="card">
+    <h3>Currently blocked areas</h3>
+    <div id="blocked">None</div>
+  </div>
+
+  <div class="card">
+    <h3>Analytics</h3>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <div class="card">
+    <h3>Incident history</h3>
+    <table>
+      <thead><tr><th>#</th><th>Location</th><th>Type</th><th>Severity</th><th>Started</th><th>Resolved</th></tr></thead>
+      <tbody id="history"></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+const pw = () => document.getElementById('pw').value;
+const msg = document.getElementById('msg');
+let nodes = [];
+
+async function loadNodes() {
+  const res = await fetch('/api/map');
+  const data = await res.json();
+  nodes = data.nodes;
+  const sel = document.getElementById('node');
+  if (sel.options.length === 0) {
+    nodes.forEach(n => {
+      const o = document.createElement('option');
+      o.value = n.id; o.textContent = n.name;
+      sel.appendChild(o);
+    });
+  }
+  const blocked = nodes.filter(n => n.blocked);
+  document.getElementById('blocked').innerHTML = blocked.length
+    ? blocked.map(n => `${n.name} <button class="green" onclick="clearZone('${n.id}')">Mark as safe</button>`).join('<br>')
+    : 'None';
+}
+
+async function loadIncidents() {
+  const res = await fetch('/api/incidents');
+  const list = await res.json();
+  document.getElementById('history').innerHTML = list.slice().reverse().map(i => `
+    <tr><td>${i.id}</td><td>${i.nodeName}</td><td>${i.type}</td><td>${i.severity}</td>
+    <td>${new Date(i.startedAt).toLocaleString()}</td>
+    <td>${i.resolvedAt ? new Date(i.resolvedAt).toLocaleString() : 'ACTIVE'}</td></tr>`).join('');
+  const resolved = list.filter(i => i.resolvedAt);
+  const avg = resolved.length
+    ? resolved.reduce((s, i) => s + (new Date(i.resolvedAt) - new Date(i.startedAt)), 0) / resolved.length / 1000
+    : 0;
+  document.getElementById('stats').innerHTML =
+    `<span>Total incidents: <b>${list.length}</b></span>
+     <span>Active: <b>${list.length - resolved.length}</b></span>
+     <span>Avg. resolution: <b>${avg.toFixed(0)} s</b></span>`;
+}
+
+async function trigger() {
+  const res = await fetch('/api/emergency', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Password': pw() },
+    body: JSON.stringify({
+      nodeId: document.getElementById('node').value,
+      type: document.getElementById('type').value,
+      severity: document.getElementById('severity').value
+    })
+  });
+  const data = await res.json();
+  msg.textContent = res.ok ? 'Zone marked dangerous. Alerts sent.' : 'Error: ' + data.error;
+  refresh();
+}
+
+async function clearZone(id) {
+  const res = await fetch('/api/emergency/' + id, { method: 'DELETE', headers: { 'X-Admin-Password': pw() } });
+  const data = await res.json();
+  msg.textContent = res.ok ? 'Zone cleared.' : 'Error: ' + data.error;
+  refresh();
+}
+
+function refresh() { loadNodes(); loadIncidents(); }
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(proto + '://' + location.host + '/ws');
+  ws.onmessage = () => refresh();
+  ws.onclose = () => setTimeout(connectWS, 2000);
+}
+
+refresh();
+connectWS();
+</script>
+</body>
+</html>
